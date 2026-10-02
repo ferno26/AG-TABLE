@@ -1063,6 +1063,11 @@ body.social-mode .soc-bell-panel{top:62px;right:12px;background:#15161b;color:#e
 .mh-p{min-width:92px;text-align:right;font-family:var(--display);font-weight:700;font-size:16px;color:var(--champ)}
 .mh-p small{display:block;font-family:var(--ui);font-size:10.5px;font-weight:500;color:var(--steel)}
 .mh-meta{font-size:11px;color:var(--steel);margin-top:6px;padding-left:12px}
+
+/* ---------- export ---------- */
+.export-row{margin-top:18px}
+.ex-img{max-width:100%;width:100%;border-radius:8px}
+@media (min-width:760px){ .ex-img{max-width:560px;display:block;margin:0 auto} }
 </style>
 </head>
 <body>
@@ -1325,6 +1330,7 @@ function migrate(s){
   s.format = { legs: legs.map((l,i)=>({ map: (l && l.map) || ('Map '+(i+1)), rounds: (l && l.rounds) || 21 })), playoffs: Object.assign({ map:'the competitive map pool', rounds:21 }, fm.playoffs || {}) };
   if(!s.unavailable || typeof s.unavailable!=='object') s.unavailable = {};
   s.auctionCfg = Object.assign({ timer:15, baseA:150, baseO:50 }, s.auctionCfg || {});
+  s.brand = Object.assign({ title:'APEX GAMING CHAMPIONSHIP', stage:'GROUP STAGE', sponsors:['RED BULL','SAMSUNG','DISCORD','YOUTUBE','ITVX'] }, s.brand || {});
   if(!Array.isArray(s.fixtures)) s.fixtures = FIXTURES.map(f=>({...f, played:false, winner:null}));
   s.fixtures.forEach(f=>{ ['rounds','homeRounds','awayRounds'].forEach(k=>{ if(typeof f[k]==='undefined') f[k]=null; }); });
   const oldScoring = s.scoring || {};
@@ -2189,6 +2195,8 @@ function standingsHTML(){
     </div>
     <p class="fine">Pts = +${state.scoring.pointsPerRound} per round won, plus +${state.scoring.winBonus} for each match won. RD is rounds won minus rounds lost. Ties are split by wins, then RD. First place goes straight to the Grand Final, second and third play the Semi-final, and fourth is eliminated.</p>
     ${observeMode ? '<div class="obs-note">Auditor view: live scores, read-only.</div>' : ''}
+    <div class="btn-row export-row"><button class="btn btn-red btn-sm" data-export="points">Download points table (HD image)</button>
+      <button class="btn btn-sm" data-export="summary">Download match summary (HD image)</button></div>
     <div style="margin-top:28px;"></div>
     ${matchHistoryHTML()}
     <div class="block-head" style="margin-top:30px;"><h2>Fixtures</h2><span class="count">${done} of ${state.fixtures.length} played</span></div>
@@ -2517,6 +2525,16 @@ function auditorHTML(){
       <div class="btn-row" style="margin-top:12px;"><button class="btn btn-primary btn-sm" id="btnSavePurses">Save points</button></div>
     </div>
 
+    <div class="section-title">Broadcast graphics</div>
+    <div class="panel">
+      <label class="fld"><span>Tournament title</span><input class="in" id="brTitle" maxlength="48" value="${esc(brand().title)}"></label>
+      <label class="fld"><span>Stage or round</span><input class="in" id="brStage" maxlength="32" value="${esc(brand().stage)}"></label>
+      <label class="fld"><span>Sponsors, separated by commas</span><input class="in" id="brSponsors" maxlength="120" value="${esc(brand().sponsors.join(', '))}"></label>
+      <div class="btn-row" style="margin-top:12px;"><button class="btn btn-primary btn-sm" id="btnSaveBrand">Save branding</button>
+        <button class="btn btn-sm" data-export="points">Preview points table</button></div>
+      <div class="hint">These appear in the header and partner strip of every exported graphic.</div>
+    </div>
+
     <div class="section-title">Scoring rules</div>
     <div class="panel">
       <div class="aud-row">
@@ -2719,6 +2737,14 @@ function bindAuditorEvents(){
     if(!state.timerRunning) state.timeLeft = TIMER_START;
     saveState(); render();
     toast('Auction settings saved');
+  });
+  on('btnSaveBrand', ()=>{
+    const sp = document.getElementById('brSponsors').value.split(',').map(x=>x.trim()).filter(Boolean).slice(0,6);
+    state.brand = { title: document.getElementById('brTitle').value.trim() || DEFAULT_BRAND.title,
+      stage: document.getElementById('brStage').value.trim() || DEFAULT_BRAND.stage,
+      sponsors: sp.length ? sp : DEFAULT_BRAND.sponsors };
+    saveState(); render();
+    toast('Branding saved');
   });
   on('btnSaveScoring', ()=>{
     const ppr = parseInt(document.getElementById('scPpr').value,10);
@@ -4289,6 +4315,263 @@ document.addEventListener('keydown', e=>{
 });
 document.addEventListener('change', e=>{
   const t = e.target; if(t.id==='socFile' && t.files && t.files[0]){ const f = t.files[0]; t.value = ''; pickMedia(f).catch(()=>toast("Couldn't read that file")); }
+});
+
+/* =========================================================
+   BROADCAST EXPORT — points table + match summary as HD PNG
+   Drawn straight to canvas (no external library) so nothing
+   can clip, reflow or fail to load at export time.
+========================================================= */
+const EXPORT_W = 1400, EXPORT_SCALE = 2;
+const DEFAULT_BRAND = { title:'APEX GAMING CHAMPIONSHIP', stage:'GROUP STAGE', sponsors:['RED BULL','SAMSUNG','DISCORD','YOUTUBE','ITVX'] };
+function brand(){ const b = (state && state.brand) || {}; return { title: b.title || DEFAULT_BRAND.title, stage: b.stage || DEFAULT_BRAND.stage,
+  sponsors: Array.isArray(b.sponsors) && b.sponsors.length ? b.sponsors : DEFAULT_BRAND.sponsors }; }
+const EX_DISP = '"Saira Condensed","Arial Narrow","Roboto Condensed",system-ui,sans-serif';
+const EX_UI = 'Inter,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif';
+const EX = { bg:'#08080A', panel:'#121216', line:'#26262B', line2:'#1B1B1F', text:'#ECECEC', dim:'#8A8A93',
+  red:'#F80414', gold:'#C9A961', silver:'#C7CCD9', bronze:'#B87333' };
+function exRound(g, x, y, w, h, r){
+  r = Math.min(r, w/2, h/2);
+  g.beginPath();
+  if(g.roundRect){ g.roundRect(x, y, w, h, r); return; }
+  g.moveTo(x+r,y); g.lineTo(x+w-r,y); g.quadraticCurveTo(x+w,y,x+w,y+r); g.lineTo(x+w,y+h-r);
+  g.quadraticCurveTo(x+w,y+h,x+w-r,y+h); g.lineTo(x+r,y+h); g.quadraticCurveTo(x,y+h,x,y+h-r); g.lineTo(x,y+r);
+  g.quadraticCurveTo(x,y,x+r,y); g.closePath();
+}
+function exFit(g, text, max, weight, start, min, family){
+  let size = start;
+  do { g.font = `${weight} ${size}px ${family||EX_DISP}`; size -= 2; } while(g.measureText(text).width > max && size > (min||12));
+  return g.font;
+}
+function exSlash(g, x, y, w, h, color){ g.save(); g.translate(x,y); g.transform(1,0,-0.5,1,0,0); g.fillStyle = color; g.fillRect(0,0,w,h); g.restore(); }
+function exGlass(g, x, y, w, h, r, tint){
+  const grd = g.createLinearGradient(x, y, x, y+h);
+  grd.addColorStop(0, tint || 'rgba(255,255,255,0.055)');
+  grd.addColorStop(1, 'rgba(255,255,255,0.012)');
+  exRound(g, x, y, w, h, r); g.fillStyle = grd; g.fill();
+  exRound(g, x+0.5, y+0.5, w-1, h-1, r); g.strokeStyle = 'rgba(255,255,255,0.09)'; g.lineWidth = 1; g.stroke();
+}
+function exCircleImg(g, img, cx, cy, rad, ring){
+  g.save(); g.beginPath(); g.arc(cx, cy, rad, 0, 6.283); g.closePath(); g.clip();
+  g.fillStyle = '#000'; g.fillRect(cx-rad, cy-rad, rad*2, rad*2);
+  if(img){
+    const s = Math.max(rad*2/img.width, rad*2/img.height), w = img.width*s, h = img.height*s;
+    g.drawImage(img, cx-w/2, cy-h/2 - rad*0.12, w, h);
+  }
+  g.restore();
+  g.beginPath(); g.arc(cx, cy, rad+2, 0, 6.283); g.strokeStyle = ring || EX.line; g.lineWidth = 3; g.stroke();
+}
+function exCrest(g, key, cx, cy, size){            // team logo: shield + initial
+  const col = teamColor(key), h = size, w = size*0.86;
+  g.save(); g.translate(cx, cy);
+  g.beginPath();
+  g.moveTo(-w/2, -h/2); g.lineTo(w/2, -h/2); g.lineTo(w/2, h*0.14);
+  g.quadraticCurveTo(w/2, h/2, 0, h/2); g.quadraticCurveTo(-w/2, h/2, -w/2, h*0.14);
+  g.closePath();
+  const grd = g.createLinearGradient(0, -h/2, 0, h/2);
+  grd.addColorStop(0, col); grd.addColorStop(1, 'rgba(0,0,0,0.65)');
+  g.fillStyle = grd; g.fill();
+  g.strokeStyle = 'rgba(255,255,255,0.25)'; g.lineWidth = 2; g.stroke();
+  g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.font = `800 ${Math.round(size*0.5)}px ${EX_DISP}`;
+  g.fillText(shortNick(key).trim().charAt(0).toUpperCase() || 'A', 0, -h*0.02);
+  g.textAlign = 'left'; g.textBaseline = 'alphabetic';
+  g.restore();
+}
+function exStamp(){
+  const d = new Date();
+  return d.toLocaleString('en-GB', { weekday:'short', day:'numeric', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit', hour12:false });
+}
+async function exHeader(g, W, logo, sub){
+  const b = brand();
+  const grd = g.createRadialGradient(W*0.86, -60, 40, W*0.86, -60, 900);
+  grd.addColorStop(0, 'rgba(248,4,20,0.34)'); grd.addColorStop(1, 'rgba(248,4,20,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, W, 420);
+  if(logo){ const lw = 108; g.drawImage(logo, 64, 54, lw, lw*logo.height/logo.width); }
+  g.fillStyle = EX.text; g.font = `800 56px ${EX_DISP}`; g.fillText('APEX', 196, 108);
+  g.fillStyle = EX.red; g.font = `700 19px ${EX_UI}`; g.fillText('G  A  M  I  N  G', 199, 138);
+  g.textAlign = 'right';
+  g.fillStyle = EX.dim; g.font = `600 22px ${EX_UI}`; g.fillText(exStamp(), W-64, 100);
+  g.fillStyle = EX.gold; g.font = `700 22px ${EX_UI}`; g.fillText(b.stage.toUpperCase(), W-64, 136);
+  g.textAlign = 'left';
+  g.font = exFit(g, b.title.toUpperCase(), W-128, 800, 86, 34);
+  g.fillStyle = EX.text; g.fillText(b.title.toUpperCase(), 64, 238);
+  exSlash(g, 70, 258, 150, 12, EX.red);
+  g.fillStyle = EX.dim; g.font = `600 26px ${EX_UI}`; g.fillText(sub, 64, 312);
+  return 356;
+}
+function exSponsors(g, W, y){
+  const b = brand(), names = b.sponsors.slice(0, 6);
+  g.fillStyle = EX.line2; g.fillRect(64, y, W-128, 1);
+  g.textAlign = 'center'; g.fillStyle = EX.dim; g.font = `600 17px ${EX_UI}`;
+  g.fillText('OFFICIAL PARTNERS', W/2, y+44);
+  const plateW = Math.min(214, (W-160)/names.length - 16), plateH = 62, gap = 16;
+  const totalW = names.length*plateW + (names.length-1)*gap;
+  let x = (W-totalW)/2;
+  names.forEach(n=>{
+    exGlass(g, x, y+68, plateW, plateH, 10);
+    g.fillStyle = EX.text;
+    g.font = exFit(g, n.toUpperCase(), plateW-28, 700, 24, 11, EX_UI);
+    g.fillText(n.toUpperCase(), x+plateW/2, y+68+plateH/2+8);
+    x += plateW + gap;
+  });
+  g.textAlign = 'left';
+  return y + 68 + plateH + 36;
+}
+function exRankStyle(i){ return i===0 ? EX.gold : i===1 ? EX.silver : i===2 ? EX.bronze : null; }
+async function pointsTableCanvas(){
+  const rows = standingsTable();
+  const ppr = Number(state.scoring.pointsPerRound)||0, bonus = Number(state.scoring.winBonus)||0;
+  const W = EXPORT_W, rowH = 132, pad = 64;
+  const headY = 356, tableTop = headY + 92;
+  const H = tableTop + rows.length*(rowH+14) + 250;
+  const c = document.createElement('canvas');
+  c.width = W*EXPORT_SCALE; c.height = H*EXPORT_SCALE;
+  const g = c.getContext('2d'); g.scale(EXPORT_SCALE, EXPORT_SCALE);
+  g.textBaseline = 'alphabetic';
+  g.fillStyle = EX.bg; g.fillRect(0,0,W,H);
+  let logo = null; try{ logo = await loadImg(LOGO_ICON_SRC); }catch(e){}
+  if(logo){ const lw = W*0.62; g.globalAlpha = 0.05; g.drawImage(logo, W*0.42, H*0.3, lw, lw*logo.height/logo.width); g.globalAlpha = 1; }
+  const done = state.fixtures.filter(f=>f.played).length;
+  await exHeader(g, W, logo, `POINTS TABLE  ·  ${done} of ${state.fixtures.length} matches played`);
+  // column header
+  const cols = { rank:pad+8, team:pad+92, mp:W-620, w:W-540, l:W-462, rp:W-372, mb:W-250, pts:W-pad };
+  g.fillStyle = EX.dim; g.font = `600 17px ${EX_UI}`;
+  g.fillText('#', cols.rank, headY+58); g.fillText('TEAM', cols.team+150, headY+58);
+  g.textAlign = 'center';
+  ['MP','W','L'].forEach((t,k)=> g.fillText(t, [cols.mp,cols.w,cols.l][k], headY+58));
+  g.font = `600 16px ${EX_UI}`; g.fillText('ROUND PTS', cols.rp, headY+58); g.fillText('WIN BONUS', cols.mb, headY+58); g.font = `600 17px ${EX_UI}`;
+  g.textAlign = 'right'; g.fillText('TOTAL', cols.pts, headY+58); g.textAlign = 'left';
+  g.fillStyle = EX.line; g.fillRect(pad, headY+74, W-pad*2, 1);
+  const portraits = {};
+  await Promise.all(rows.map(async r=>{ try{ portraits[r.name] = await loadImg(teamPhoto(r.name)); }catch(e){ portraits[r.name] = null; } }));
+  rows.forEach((r,i)=>{
+    const y = tableTop + i*(rowH+14), accent = exRankStyle(i), col = teamColor(r.name);
+    exGlass(g, pad, y, W-pad*2, rowH, 14, i===0 ? 'rgba(201,169,97,0.12)' : 'rgba(255,255,255,0.05)');
+    if(accent){ exRound(g, pad, y, 6, rowH, 3); g.fillStyle = accent; g.fill(); }
+    else { exRound(g, pad, y, 6, rowH, 3); g.fillStyle = col; g.fill(); }
+    // rank
+    g.textAlign = 'center';
+    if(accent){
+      g.beginPath(); g.arc(cols.rank+24, y+rowH/2, 27, 0, 6.283); g.fillStyle = accent; g.fill();
+      g.fillStyle = '#14100A'; g.font = `800 32px ${EX_DISP}`; g.fillText(String(i+1), cols.rank+24, y+rowH/2+11);
+    } else {
+      g.fillStyle = EX.dim; g.font = `800 34px ${EX_DISP}`; g.fillText(String(i+1), cols.rank+24, y+rowH/2+12);
+    }
+    g.textAlign = 'left';
+    // leader portrait + crest
+    exCircleImg(g, portraits[r.name], cols.team+46, y+rowH/2, 42, accent || col);
+    exCrest(g, r.name, cols.team+122, y+rowH/2, 56);
+    // names
+    g.fillStyle = EX.text; g.font = exFit(g, shortNick(r.name).toUpperCase(), cols.mp-cols.team-220, 800, 40, 18);
+    g.fillText(shortNick(r.name).toUpperCase(), cols.team+160, y+rowH/2-2);
+    g.fillStyle = EX.dim; g.font = `600 19px ${EX_UI}`;
+    g.fillText('CAPTAIN  ' + L(r.name).toUpperCase(), cols.team+160, y+rowH/2+30);
+    // metrics
+    g.textAlign = 'center'; g.font = `700 32px ${EX_DISP}`;
+    g.fillStyle = EX.text; g.fillText(String(r.played), cols.mp, y+rowH/2+10);
+    g.fillStyle = '#5CBE8A'; g.fillText(String(r.won), cols.w, y+rowH/2+10);
+    g.fillStyle = r.lost ? EX.red : EX.dim; g.fillText(String(r.lost), cols.l, y+rowH/2+10);
+    g.fillStyle = EX.text; g.font = `700 30px ${EX_DISP}`;
+    g.fillText(String(r.rw*ppr), cols.rp, y+rowH/2+4);
+    g.fillStyle = EX.dim; g.font = `500 15px ${EX_UI}`; g.fillText(r.rw+' rounds', cols.rp, y+rowH/2+28);
+    g.fillStyle = EX.gold; g.font = `700 30px ${EX_DISP}`; g.fillText('+'+(r.won*bonus), cols.mb, y+rowH/2+4);
+    g.fillStyle = EX.dim; g.font = `500 15px ${EX_UI}`; g.fillText(r.won+' × '+bonus, cols.mb, y+rowH/2+28);
+    // total
+    g.textAlign = 'right';
+    g.fillStyle = accent || EX.text; g.font = `800 58px ${EX_DISP}`;
+    g.fillText(String(r.points), cols.pts, y+rowH/2+20);
+    g.textAlign = 'left';
+  });
+  let y = tableTop + rows.length*(rowH+14) + 10;
+  g.fillStyle = EX.dim; g.font = `500 18px ${EX_UI}`;
+  g.fillText(`+${ppr} per round won  ·  +${bonus} for each match won  ·  ranked by points, then wins, then round difference`, pad, y+10);
+  exSponsors(g, W, y+36);
+  return c;
+}
+async function matchSummaryCanvas(){
+  const played = state.fixtures.map((f,i)=>({f,i})).filter(x=>x.f.played);
+  const W = EXPORT_W, rowH = 112, pad = 64, headY = 356;
+  const tableTop = headY + 70;
+  const H = tableTop + Math.max(1, played.length)*(rowH+12) + 250;
+  const c = document.createElement('canvas');
+  c.width = W*EXPORT_SCALE; c.height = H*EXPORT_SCALE;
+  const g = c.getContext('2d'); g.scale(EXPORT_SCALE, EXPORT_SCALE);
+  g.fillStyle = EX.bg; g.fillRect(0,0,W,H);
+  let logo = null; try{ logo = await loadImg(LOGO_ICON_SRC); }catch(e){}
+  if(logo){ const lw = W*0.6; g.globalAlpha = 0.05; g.drawImage(logo, W*0.44, H*0.34, lw, lw*logo.height/logo.width); g.globalAlpha = 1; }
+  await exHeader(g, W, logo, `MATCH SUMMARY  ·  ${played.length} of ${state.fixtures.length} results`);
+  if(!played.length){
+    g.fillStyle = EX.dim; g.font = `600 26px ${EX_UI}`; g.fillText('No results recorded yet.', pad, tableTop+60);
+  }
+  played.forEach(({f,i}, k)=>{
+    const y = tableTop + k*(rowH+12), b = fixtureBreakdown(f), fmt = fixtureFormat(i);
+    exGlass(g, pad, y, W-pad*2, rowH, 14);
+    g.fillStyle = EX.dim; g.font = `600 17px ${EX_UI}`;
+    g.fillText(`MATCH ${i+1}`, pad+24, y+34);
+    g.fillText(`${fmt.map.toUpperCase()}  ·  ${f.rounds||fmt.rounds} ROUNDS`, pad+128, y+34);
+    if(f.forfeit){ g.fillStyle = EX.red; g.fillText('FORFEIT', pad+430, y+34); }
+    const side = (team, rounds, pts, win, x)=>{
+      g.fillStyle = teamColor(team); exRound(g, x, y+52, 5, 38, 2); g.fill();
+      g.fillStyle = win ? EX.text : EX.dim;
+      g.font = exFit(g, shortNick(team).toUpperCase(), 300, win?800:700, 34, 16);
+      g.fillText(shortNick(team).toUpperCase(), x+18, y+80);
+    };
+    side(f.home, f.homeRounds, b.home, f.winner===f.home, pad+24);
+    side(f.away, f.awayRounds, b.away, f.winner===f.away, W/2+30);
+    g.textAlign = 'right';
+    const score = (r, pts, win, x)=>{
+      g.fillStyle = win ? EX.text : EX.dim; g.font = `800 46px ${EX_DISP}`; g.fillText(String(r ?? 0), x, y+84);
+      g.fillStyle = win ? EX.gold : EX.dim; g.font = `600 17px ${EX_UI}`; g.fillText('+'+pts+' pts', x, y+36);
+    };
+    score(f.homeRounds, b.home, f.winner===f.home, W/2-40);
+    score(f.awayRounds, b.away, f.winner===f.away, W-pad-24);
+    g.textAlign = 'left';
+    const m = typeof matchMvp==='function' ? matchMvp(f) : null;
+    if(m){ g.fillStyle = EX.gold; g.font = `700 17px ${EX_UI}`; g.fillText('MVP  '+m.name.toUpperCase()+'  ·  '+m.kills+' KILLS', pad+24, y+rowH-8); }
+  });
+  exSponsors(g, W, tableTop + Math.max(1, played.length)*(rowH+12) + 24);
+  return c;
+}
+async function exDownload(canvas, filename){
+  const blob = await new Promise(r=>canvas.toBlob(r, 'image/png'));
+  if(window.claude && typeof window.claude.use==='function'){
+    try{ const dl = await window.claude.use('downloads'); if(dl){ await dl.save({ filename, data:blob }); toast('Image saved'); return; } }catch(e){}
+  }
+  const url = URL.createObjectURL(blob); const a = document.createElement('a');
+  a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 1500);
+  toast('Image downloaded');
+}
+async function openExport(kind){
+  const title = kind==='summary' ? 'Match summary' : 'Points table';
+  const modal = openModal(`<div class="modal-head"><div><h2>${title}</h2><p>Broadcast graphic, ${EXPORT_W*EXPORT_SCALE}px wide</p></div><button class="icon-x" data-close aria-label="Close">×</button></div>
+    <div class="modal-body"><div class="empty-state">Rendering your graphic…</div></div>`);
+  let canvas;
+  try{
+    if(document.fonts && document.fonts.ready) await document.fonts.ready;
+    canvas = kind==='summary' ? await matchSummaryCanvas() : await pointsTableCanvas();
+  }catch(e){ toast("Couldn't build the image"); closeModal(); return; }
+  if(!document.body.contains(modal)) return;
+  const name = (kind==='summary' ? 'apex-match-summary-' : 'apex-points-table-') + new Date().toISOString().slice(0,10) + '.png';
+  const blob = await new Promise(r=>canvas.toBlob(r,'image/png'));
+  const file = new File([blob], name, { type:'image/png' });
+  const canShare = !!(navigator.canShare && navigator.canShare({ files:[file] }));
+  modal.querySelector('.modal-body').innerHTML = `<img class="trophy-img ex-img" src="${canvas.toDataURL('image/png')}" alt="${title} graphic">
+    <div class="btn-row trophy-actions">${canShare?'<button class="btn btn-red" id="exShare">Share</button>':''}<button class="btn ${canShare?'':'btn-red'}" id="exSave">Download PNG</button><button class="btn" id="exCopy">Copy image</button></div>
+    <p class="hint" style="text-align:center;">${canvas.width} × ${canvas.height} px. Paste straight into Discord, or post it as-is.</p>`;
+  modal.querySelector('#exSave').onclick = ()=> exDownload(canvas, name);
+  modal.querySelector('#exCopy').onclick = async ()=>{
+    try{ await navigator.clipboard.write([ new ClipboardItem({ 'image/png': blob }) ]); toast('Copied. Paste it anywhere'); }
+    catch(e){ toast("Copying images isn't supported here. Use Download PNG"); }
+  };
+  const sh = modal.querySelector('#exShare');
+  if(sh) sh.onclick = async ()=>{ try{ await navigator.share({ files:[file], title }); }catch(e){} };
+}
+document.addEventListener('click', e=>{
+  const t = e.target.closest('[data-export]');
+  if(!t) return;
+  openExport(t.dataset.export);
 });
 
 /* =========================================================
