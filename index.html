@@ -467,6 +467,15 @@ body.readonly .viewer-only{display:inline-flex !important}
 .rule{display:grid;grid-template-columns:44px 1fr;gap:10px;padding:12px 0;border-top:1px solid var(--line-2)}
 .rule:first-of-type{border-top:0}
 .rn{font-family:var(--display);font-weight:700;font-size:18px;color:var(--red);font-variant-numeric:tabular-nums}
+.pt-list{display:grid}
+.pt-row{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:12px 0;border-top:1px solid var(--line-2);font-size:14.5px}
+.pt-row:first-of-type{border-top:0}
+.pt-row span{color:var(--silver);font-weight:500}
+.pt-row b{font-family:var(--display);font-weight:800;font-size:19px;letter-spacing:.02em;color:var(--champ);white-space:nowrap;font-variant-numeric:tabular-nums}
+.pt-row b.out{color:var(--red)}
+.pt-row.dv b{font-family:var(--ui);font-size:13px;font-weight:700;letter-spacing:0;white-space:normal;text-align:right}
+@media (max-width:520px){ .pt-row.dv{flex-direction:column;align-items:flex-start;gap:4px} .pt-row.dv b{text-align:left} }
+
 .rule h3{font-size:14.5px;font-weight:600}
 .rule p{font-size:14px;color:var(--steel);line-height:1.55;margin-top:3px;max-width:68ch}
 
@@ -2990,6 +2999,20 @@ function rulesHTML(){
       ${rule('4.2','Match winner bonus','The team that wins a match receives a flat bonus of '+s.winBonus+' points on top of its round points. Example: winning a match with 21 round wins scores 21 + '+s.winBonus+' = '+(21*s.pointsPerRound + s.winBonus)+' points.')}
       ${rule('4.3','Rankings','Teams are ranked by total points, then match wins, then round difference.')}
       ${rule('4.4','Qualification','First place goes straight to the Grand Final. Second and third play the Semi-final. Fourth is eliminated.')}
+    </section>
+    <section class="card"><h2>Semi-finals &amp; finals</h2>
+      <div class="pt-list">
+        <div class="pt-row"><span>Kills</span><b>+1 pt each</b></div>
+        <div class="pt-row"><span>Round win</span><b>+10 pts</b></div>
+        <div class="pt-row"><span>Round survival / participation</span><b>+1 pt per round</b></div>
+      </div>
+    </section>
+    <section class="card"><h2>End of Day 6</h2>
+      <div class="pt-list">
+        <div class="pt-row dv"><span>1st place</span><b>Advances directly to Finals</b></div>
+        <div class="pt-row dv"><span>2nd &amp; 3rd place</span><b>Qualify for Semi-finals</b></div>
+        <div class="pt-row dv"><span>Bottom place</span><b class="out">Eliminated</b></div>
+      </div>
     </section>
     <section class="card"><h2>6. Prize pool</h2>
       ${rule('6.1', esc(seasonLabel())+' prize pool', 'The total prize pool is '+prizeFmt(prize().total)+'. Winner '+prize().first+'% ('+prizeFmt(prizeAmt(prize().first))+'), runner-up '+prize().second+'% ('+prizeFmt(prizeAmt(prize().second))+'), third '+prize().third+'% ('+prizeFmt(prizeAmt(prize().third))+'), season MVP '+prize().mvp+'% ('+prizeFmt(prizeAmt(prize().mvp))+').')}
